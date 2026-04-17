@@ -4,8 +4,13 @@ import { URL } from "node:url";
 const PORT = Number(process.env.PORT || 8787);
 const JUSO_API_KEY = process.env.JUSO_API_KEY || "";
 const DATA_GO_KR_API_KEY = process.env.DATA_GO_KR_API_KEY || "";
+const VWORLD_API_KEY = process.env.VWORLD_API_KEY || "";
+const VWORLD_DOMAIN = process.env.VWORLD_DOMAIN || "api.vworld.kr";
 const BUILDING_HUB_BASE_URL = "https://apis.data.go.kr/1613000/BldRgstHubService";
 const LEGAL_DONG_BASE_URL = "https://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList";
+const VWORLD_INDVD_LAND_PRICE_URL = "https://api.vworld.kr/ned/data/getIndvdLandPriceAttr";
+const VWORLD_TRIT_PLAN_WFS_URL = "https://api.vworld.kr/ned/wfs/getTritPlnSpceWFS";
+const VWORLD_TRIT_PLAN_TYPENAMES = ["dt_d124", "dt_d125", "dt_d126", "dt_d127", "dt_d128"];
 
 const mockGroups = {
   retail: {
@@ -285,6 +290,8 @@ async function fetchJusoCandidates(query) {
     buldSlno: row.buldSlno,
     bdNm: row.bdNm,
     bdMgtSn: row.bdMgtSn,
+    entX: row.entX || row.x || "",
+    entY: row.entY || row.y || "",
   }));
 }
 
@@ -341,6 +348,12 @@ function parseJibunAddress(jibunAddr = "") {
   };
 }
 
+function buildPnu(regionCode, platGbCd, bun, ji) {
+  if (!regionCode || !bun || !ji) return "";
+  const landTypeCode = platGbCd === "1" ? "2" : "1";
+  return `${regionCode}${landTypeCode}${bun}${ji}`;
+}
+
 async function fetchBuildingTitleInfo({ sigunguCd, bjdongCd, platGbCd, bun, ji }) {
   const url = new URL(`${BUILDING_HUB_BASE_URL}/getBrTitleInfo`);
   url.searchParams.set("serviceKey", DATA_GO_KR_API_KEY);
@@ -351,6 +364,120 @@ async function fetchBuildingTitleInfo({ sigunguCd, bjdongCd, platGbCd, bun, ji }
   url.searchParams.set("ji", ji);
   url.searchParams.set("_type", "json");
   url.searchParams.set("numOfRows", "20");
+  url.searchParams.set("pageNo", "1");
+
+  const data = await fetchJsonWithFallback([url]);
+  const items = data?.response?.body?.items?.item ?? [];
+  return Array.isArray(items) ? items : [items];
+}
+
+async function fetchVworldIndividualLandPrice({ pnu }) {
+  if (!VWORLD_API_KEY || !pnu) return null;
+
+  const url = new URL(VWORLD_INDVD_LAND_PRICE_URL);
+  url.searchParams.set("pnu", pnu);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("numOfRows", "10");
+  url.searchParams.set("pageNo", "1");
+  url.searchParams.set("key", VWORLD_API_KEY);
+  url.searchParams.set("domain", VWORLD_DOMAIN);
+
+  const data = await fetchJsonWithFallback([url]);
+  const root = data?.indvdLandPrices ?? data?.response ?? data ?? {};
+  const resultCode = root?.resultCode;
+  const resultMsg = root?.resultMsg;
+
+  if (resultCode && resultCode !== "OK") {
+    throw new Error(`VWorld 개별공시지가 오류 (${resultCode}): ${resultMsg || "알 수 없는 오류"}`);
+  }
+
+  const rows =
+    root?.field ??
+    root?.item ??
+    root?.items?.item ??
+    Object.values(root).find(Array.isArray) ??
+    [];
+  const list = Array.isArray(rows) ? rows : [rows];
+  return list.find(Boolean) || null;
+}
+
+function parseCoordinate(value) {
+  const numeric = Number(String(value ?? "").trim());
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function extractWgs84Point(selected) {
+  const x = parseCoordinate(selected?.entX);
+  const y = parseCoordinate(selected?.entY);
+  if (x === null || y === null) return null;
+
+  if (Math.abs(x) <= 180 && Math.abs(y) <= 90) {
+    return { lon: x, lat: y };
+  }
+
+  if (Math.abs(y) <= 180 && Math.abs(x) <= 90) {
+    return { lon: y, lat: x };
+  }
+
+  return null;
+}
+
+async function fetchVworldZoning({ selected }) {
+  if (!VWORLD_API_KEY) return "";
+
+  const point = extractWgs84Point(selected);
+  if (!point) return "";
+
+  const delta = 0.0005;
+  const bbox = [
+    point.lat - delta,
+    point.lon - delta,
+    point.lat + delta,
+    point.lon + delta,
+    "EPSG:4326",
+  ].join(",");
+
+  const url = new URL(VWORLD_TRIT_PLAN_WFS_URL);
+  url.searchParams.set("typename", VWORLD_TRIT_PLAN_TYPENAMES.join(","));
+  url.searchParams.set("bbox", bbox);
+  url.searchParams.set("maxFeatures", "50");
+  url.searchParams.set("resultType", "results");
+  url.searchParams.set("srsName", "EPSG:4326");
+  url.searchParams.set("output", "application/json");
+  url.searchParams.set("key", VWORLD_API_KEY);
+  url.searchParams.set("domain", VWORLD_DOMAIN);
+
+  const data = await fetchJsonWithFallback([url]);
+  const features = data?.features ?? data?.response?.features ?? [];
+  if (!Array.isArray(features) || !features.length) return "";
+
+  const names = [
+    ...new Set(
+      features
+        .map((feature) => feature?.properties?.spfc_dstrc_code_nm)
+        .filter(Boolean),
+    ),
+  ];
+
+  return names.join(", ");
+}
+
+async function fetchBuildingExposPubuseAreaInfo({
+  sigunguCd,
+  bjdongCd,
+  platGbCd,
+  bun,
+  ji,
+}) {
+  const url = new URL(`${BUILDING_HUB_BASE_URL}/getBrExposPubuseAreaInfo`);
+  url.searchParams.set("serviceKey", DATA_GO_KR_API_KEY);
+  url.searchParams.set("sigunguCd", sigunguCd);
+  url.searchParams.set("bjdongCd", bjdongCd);
+  url.searchParams.set("platGbCd", platGbCd);
+  url.searchParams.set("bun", bun);
+  url.searchParams.set("ji", ji);
+  url.searchParams.set("_type", "json");
+  url.searchParams.set("numOfRows", "200");
   url.searchParams.set("pageNo", "1");
 
   const data = await fetchJsonWithFallback([url]);
@@ -377,7 +504,100 @@ function formatNumberLike(value) {
   return numeric.toLocaleString("ko-KR");
 }
 
-function mapBuildingItemToBasicInfo({ selected, legalDong, buildingItem, propertyType }) {
+function parseNumeric(value) {
+  const numeric = Number(String(value ?? "").replace(/,/g, ""));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function matchExposureRowScore(row, selected) {
+  let score = 0;
+  const buildingWing = row?.dongNm || row?.dongNmNm || "";
+  const unitNumber = row?.hoNm || row?.hoNmNm || "";
+  const floorName = row?.floorNm || row?.floorNo || "";
+
+  if (selected?.bdNm && buildingWing && selected.bdNm.includes(buildingWing)) {
+    score += 5;
+  }
+  if (selected?.fetchLabel && unitNumber && selected.fetchLabel.includes(unitNumber)) {
+    score += 4;
+  }
+  if (selected?.fetchLabel && floorName && selected.fetchLabel.includes(String(floorName))) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function summarizeExposureRows(rows, selected) {
+  if (!rows.length) {
+    return {
+      exclusiveArea: "",
+      supplyArea: "",
+      landShareArea: "",
+      buildingWing: selected?.bdNm || "",
+      unitNumber: "",
+      floor: "",
+    };
+  }
+
+  const scopedRows = [...rows].sort(
+    (a, b) => matchExposureRowScore(b, selected) - matchExposureRowScore(a, selected),
+  );
+
+  const topScore = matchExposureRowScore(scopedRows[0], selected);
+  const candidateRows =
+    topScore > 0
+      ? scopedRows.filter((row) => matchExposureRowScore(row, selected) === topScore)
+      : scopedRows;
+
+  let exclusiveArea = 0;
+  let commonArea = 0;
+  let landShareArea = 0;
+
+  for (const row of candidateRows) {
+    const area = parseNumeric(row?.area);
+    const exposPubuseName = `${row?.exposPubuseGbCdNm ?? ""}`.trim();
+    const mainPurposeName = `${row?.mainPurpsCdNm ?? ""}`.trim();
+    const etcPurpose = `${row?.etcPurps ?? ""}`.trim();
+    const joinedPurpose = `${mainPurposeName} ${etcPurpose}`;
+
+    if (joinedPurpose.includes("대지권")) {
+      landShareArea += area;
+      continue;
+    }
+
+    if (exposPubuseName.includes("전유")) {
+      exclusiveArea += area;
+      continue;
+    }
+
+    if (exposPubuseName.includes("공용")) {
+      commonArea += area;
+    }
+  }
+
+  const representative = candidateRows[0] || {};
+
+  return {
+    exclusiveArea: exclusiveArea ? String(exclusiveArea) : "",
+    supplyArea: exclusiveArea || commonArea ? String(exclusiveArea + commonArea) : "",
+    landShareArea: landShareArea ? String(landShareArea) : "",
+    buildingWing: representative?.dongNm || selected?.bdNm || "",
+    unitNumber: representative?.hoNm || "",
+    floor: representative?.floorNm || representative?.floorNo || "",
+  };
+}
+
+function mapBuildingItemToBasicInfo({
+  selected,
+  legalDong,
+  buildingItem,
+  exposureSummary,
+  vworldLandPrice,
+  zoning,
+  pnu,
+  propertyType,
+}) {
   const totalFloors = buildingItem?.grndFlrCnt || "";
   const builtYear = (buildingItem?.useAprDay || "").slice(0, 4);
 
@@ -386,24 +606,25 @@ function mapBuildingItemToBasicInfo({ selected, legalDong, buildingItem, propert
       normalizeAddressName(selected?.jibunAddr || selected?.roadAddr || "") || "",
     parcel: selected?.jibunAddr?.split(" ").at(-1) || "",
     buildingName: buildingItem?.bldNm || selected?.bdNm || selected?.fetchLabel || "",
-    exclusiveArea: "",
-    supplyArea: buildingItem?.totArea || "",
-    landShareArea: buildingItem?.platArea || "",
-    buildingWing: selected?.bdNm || "",
-    unitNumber: "",
-    floor: "",
+    exclusiveArea: exposureSummary?.exclusiveArea || "",
+    supplyArea: exposureSummary?.supplyArea || buildingItem?.totArea || "",
+    landShareArea: exposureSummary?.landShareArea || buildingItem?.platArea || "",
+    buildingWing: exposureSummary?.buildingWing || selected?.bdNm || "",
+    unitNumber: exposureSummary?.unitNumber || "",
+    floor: exposureSummary?.floor || "",
     totalFloors,
     builtYear,
     usage: buildingItem?.mainPurpsCdNm || "",
-    zoning: "",
-    officialYear: "",
-    landPrice: "",
+    zoning: zoning || "",
+    officialYear: vworldLandPrice?.stdrYear || "",
+    landPrice: vworldLandPrice?.pblntfPclnd || "",
     purpose: propertyType === "상가" ? "매매 참고" : "",
     type: propertyType || "",
     fetchLabel: selected?.fetchLabel || "",
     rawMeta: {
       legalDongName: legalDong?.locatadd_nm || "",
       regionCode: legalDong?.region_cd || "",
+      pnu,
       roadAddr: selected?.roadAddr || "",
       jibunAddr: selected?.jibunAddr || "",
       platArea: formatNumberLike(buildingItem?.platArea),
@@ -454,6 +675,7 @@ async function resolveBasicInfo(query, propertyType, candidateIndex) {
   const regionCode = String(legalDong.region_cd);
   const sigunguCd = regionCode.slice(0, 5);
   const bjdongCd = regionCode.slice(5, 10);
+  const pnu = buildPnu(regionCode, platGbCd, bun, ji);
   const buildingItems = await fetchBuildingTitleInfo({
     sigunguCd,
     bjdongCd,
@@ -461,7 +683,31 @@ async function resolveBasicInfo(query, propertyType, candidateIndex) {
     bun,
     ji,
   });
+  const exposPubuseAreaItems = await fetchBuildingExposPubuseAreaInfo({
+    sigunguCd,
+    bjdongCd,
+    platGbCd,
+    bun,
+    ji,
+  });
   const buildingItem = pickBestBuildingItem(buildingItems, selected);
+  const exposureSummary = summarizeExposureRows(exposPubuseAreaItems, selected);
+  let vworldLandPrice = null;
+  let zoning = "";
+
+  if (VWORLD_API_KEY) {
+    try {
+      vworldLandPrice = await fetchVworldIndividualLandPrice({ pnu });
+    } catch (error) {
+      console.error("[resolveBasicInfo] VWorld land price lookup failed:", error);
+    }
+
+    try {
+      zoning = await fetchVworldZoning({ selected });
+    } catch (error) {
+      console.error("[resolveBasicInfo] VWorld zoning lookup failed:", error);
+    }
+  }
 
   if (!buildingItem) {
     return {
@@ -478,9 +724,9 @@ async function resolveBasicInfo(query, propertyType, candidateIndex) {
         totalFloors: "",
         builtYear: "",
         usage: "",
-        zoning: "",
-        officialYear: "",
-        landPrice: "",
+        zoning,
+        officialYear: vworldLandPrice?.stdrYear || "",
+        landPrice: vworldLandPrice?.pblntfPclnd || "",
         purpose: "",
         type: propertyType,
         fetchLabel: selected.fetchLabel,
@@ -496,10 +742,16 @@ async function resolveBasicInfo(query, propertyType, candidateIndex) {
       selected,
       legalDong,
       buildingItem,
+      exposureSummary,
+      vworldLandPrice,
+      zoning,
+      pnu,
       propertyType,
     }),
     note:
-      "주소검색, 법정동코드, 건축물대장 표제부까지 실제 조회했습니다. 용도지역과 개별공시지가는 다음 단계에서 추가 연결이 필요합니다.",
+      VWORLD_API_KEY
+        ? "주소검색, 법정동코드, 건축물대장 표제부/전유공용면적과 VWorld 용도지역·개별공시지가까지 실제 조회했습니다."
+        : "주소검색, 법정동코드, 건축물대장 표제부/전유공용면적까지 실제 조회했습니다. 용도지역과 개별공시지가는 VWorld API 키를 추가하면 함께 조회할 수 있습니다.",
     source: "backend",
   };
 }
