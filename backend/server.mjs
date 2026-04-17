@@ -740,12 +740,6 @@ async function resolveBasicInfo(query, propertyType, candidateIndex, requestDoma
     } catch (error) {
       console.error("[resolveBasicInfo] VWorld land price lookup failed:", error);
     }
-
-    try {
-      zoning = await fetchVworldZoning({ selected, requestDomain });
-    } catch (error) {
-      console.error("[resolveBasicInfo] VWorld zoning lookup failed:", error);
-    }
   }
 
   if (!buildingItem) {
@@ -789,8 +783,8 @@ async function resolveBasicInfo(query, propertyType, candidateIndex, requestDoma
     }),
     note:
       VWORLD_API_KEY
-        ? "주소검색, 법정동코드, 건축물대장 표제부/전유공용면적과 VWorld 용도지역·개별공시지가까지 실제 조회했습니다."
-        : "주소검색, 법정동코드, 건축물대장 표제부/전유공용면적까지 실제 조회했습니다. 용도지역과 개별공시지가는 VWorld API 키를 추가하면 함께 조회할 수 있습니다.",
+        ? "주소검색, 법정동코드, 건축물대장 표제부/전유공용면적과 VWorld 개별공시지가까지 실제 조회했습니다. 용도지역은 다음 단계에서 안정화 예정입니다."
+        : "주소검색, 법정동코드, 건축물대장 표제부/전유공용면적까지 실제 조회했습니다. 개별공시지가와 용도지역은 VWorld API 키를 추가하면 보강할 수 있습니다.",
     source: "backend",
   };
 }
