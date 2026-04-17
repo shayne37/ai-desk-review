@@ -12,6 +12,10 @@ const VWORLD_INDVD_LAND_PRICE_URL = "https://api.vworld.kr/ned/data/getIndvdLand
 const VWORLD_TRIT_PLAN_WFS_URL = "https://api.vworld.kr/ned/wfs/getTritPlnSpceWFS";
 const VWORLD_TRIT_PLAN_TYPENAMES = ["dt_d124", "dt_d125", "dt_d126", "dt_d127", "dt_d128"];
 
+function cleanText(value) {
+  return String(value ?? "").trim();
+}
+
 const mockGroups = {
   retail: {
     searchText: "서울특별시 강남구 대치동 은마상가",
@@ -376,7 +380,7 @@ async function fetchBuildingTitleInfo({ sigunguCd, bjdongCd, platGbCd, bun, ji }
   return Array.isArray(items) ? items : [items];
 }
 
-async function fetchVworldIndividualLandPrice({ pnu }) {
+async function fetchVworldIndividualLandPrice({ pnu, requestDomain }) {
   if (!VWORLD_API_KEY || !pnu) return null;
 
   const url = new URL(VWORLD_INDVD_LAND_PRICE_URL);
@@ -385,7 +389,7 @@ async function fetchVworldIndividualLandPrice({ pnu }) {
   url.searchParams.set("numOfRows", "10");
   url.searchParams.set("pageNo", "1");
   url.searchParams.set("key", VWORLD_API_KEY);
-  url.searchParams.set("domain", VWORLD_DOMAIN);
+  url.searchParams.set("domain", resolveVworldDomain(requestDomain));
 
   const data = await fetchJsonWithFallback([url]);
   const root = data?.indvdLandPrices ?? data?.response ?? data ?? {};
@@ -404,6 +408,12 @@ async function fetchVworldIndividualLandPrice({ pnu }) {
     [];
   const list = Array.isArray(rows) ? rows : [rows];
   return list.find(Boolean) || null;
+}
+
+function resolveVworldDomain(requestDomain = "") {
+  const normalized = cleanText(requestDomain);
+  if (normalized && normalized !== "null") return normalized;
+  return VWORLD_DOMAIN;
 }
 
 function parseCoordinate(value) {
@@ -427,7 +437,7 @@ function extractWgs84Point(selected) {
   return null;
 }
 
-async function fetchVworldZoning({ selected }) {
+async function fetchVworldZoning({ selected, requestDomain }) {
   if (!VWORLD_API_KEY) return "";
 
   const point = extractWgs84Point(selected);
@@ -450,7 +460,7 @@ async function fetchVworldZoning({ selected }) {
   url.searchParams.set("srsName", "EPSG:4326");
   url.searchParams.set("output", "application/json");
   url.searchParams.set("key", VWORLD_API_KEY);
-  url.searchParams.set("domain", VWORLD_DOMAIN);
+  url.searchParams.set("domain", resolveVworldDomain(requestDomain));
 
   const data = await fetchJsonWithFallback([url]);
   const features = data?.features ?? data?.response?.features ?? [];
@@ -605,12 +615,16 @@ function mapBuildingItemToBasicInfo({
 }) {
   const totalFloors = buildingItem?.grndFlrCnt || "";
   const builtYear = (buildingItem?.useAprDay || "").slice(0, 4);
+  const buildingName =
+    cleanText(buildingItem?.bldNm) ||
+    cleanText(selected?.bdNm) ||
+    cleanText(selected?.fetchLabel);
 
   return {
     address:
       normalizeAddressName(selected?.jibunAddr || selected?.roadAddr || "") || "",
     parcel: extractParcelToken(selected?.jibunAddr || "") || "",
-    buildingName: buildingItem?.bldNm || selected?.bdNm || selected?.fetchLabel || "",
+    buildingName,
     exclusiveArea: exposureSummary?.exclusiveArea || "",
     supplyArea: exposureSummary?.supplyArea || buildingItem?.totArea || "",
     landShareArea: exposureSummary?.landShareArea || buildingItem?.platArea || "",
@@ -654,7 +668,24 @@ async function resolveCandidates(query, propertyType) {
   }));
 }
 
-async function resolveBasicInfo(query, propertyType, candidateIndex) {
+function detectRequestDomain(req) {
+  const candidates = [req.headers.origin, req.headers.referer, req.headers.referrer];
+
+  for (const candidate of candidates) {
+    const value = cleanText(candidate);
+    if (!value || value === "null") continue;
+
+    try {
+      return new URL(value).hostname;
+    } catch (error) {
+      // Ignore malformed values and continue.
+    }
+  }
+
+  return "";
+}
+
+async function resolveBasicInfo(query, propertyType, candidateIndex, requestDomain = "") {
   if (!JUSO_API_KEY || !DATA_GO_KR_API_KEY) {
     const bundle = getMockBundle(propertyType);
     const item = bundle.items[candidateIndex] ?? bundle.items[0];
@@ -702,13 +733,16 @@ async function resolveBasicInfo(query, propertyType, candidateIndex) {
 
   if (VWORLD_API_KEY) {
     try {
-      vworldLandPrice = await fetchVworldIndividualLandPrice({ pnu });
+      vworldLandPrice = await fetchVworldIndividualLandPrice({
+        pnu,
+        requestDomain,
+      });
     } catch (error) {
       console.error("[resolveBasicInfo] VWorld land price lookup failed:", error);
     }
 
     try {
-      zoning = await fetchVworldZoning({ selected });
+      zoning = await fetchVworldZoning({ selected, requestDomain });
     } catch (error) {
       console.error("[resolveBasicInfo] VWorld zoning lookup failed:", error);
     }
@@ -796,6 +830,7 @@ const server = http.createServer(async (req, res) => {
         body.query || "",
         body.propertyType || "",
         Number(body.candidateIndex || 0),
+        detectRequestDomain(req),
       );
       sendJson(res, 200, result);
       return;
