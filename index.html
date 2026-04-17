@@ -216,7 +216,7 @@
 
       .main {
         min-width: 0;
-        padding: 18px;
+        padding: 14px;
         display: flex;
         flex-direction: column;
         gap: 12px;
@@ -234,7 +234,7 @@
 
       .toolbar {
         border-radius: 14px;
-        padding: 14px 16px;
+        padding: 12px 14px;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -316,7 +316,7 @@
       }
 
       .search-panel {
-        padding: 12px;
+        padding: 10px;
         display: grid;
         gap: 10px;
       }
@@ -390,7 +390,7 @@
       table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 1680px;
+        min-width: 1480px;
       }
 
       th,
@@ -409,10 +409,10 @@
       th {
         background: #f3f7fb;
         color: #445266;
-        font-size: 12px;
+        font-size: 11px;
         font-weight: 700;
         text-align: left;
-        padding: 10px 10px;
+        padding: 9px 8px;
         white-space: nowrap;
       }
 
@@ -423,10 +423,11 @@
       .cell-input,
       .cell-select {
         width: 100%;
-        min-height: 42px;
+        min-height: 38px;
         border: 0;
-        padding: 0 10px;
+        padding: 0 8px;
         background: transparent;
+        font-size: 13px;
       }
 
       .cell-input:focus,
@@ -448,7 +449,7 @@
       }
 
       .section-footer {
-        padding: 10px 12px;
+        padding: 10px;
         display: grid;
         grid-template-columns: 1.2fr 1fr;
         gap: 10px;
@@ -560,9 +561,9 @@
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
 
-        table {
-          min-width: 1680px;
-        }
+          table {
+          min-width: 1480px;
+          }
       }
 
       @media (max-width: 1024px) {
@@ -801,21 +802,21 @@
           <div class="grid-wrap">
             <table>
               <colgroup>
-                <col style="width: 170px" />
-                <col style="width: 120px" />
-                <col style="width: 170px" />
+                <col style="width: 150px" />
+                <col style="width: 100px" />
+                <col style="width: 150px" />
+                <col style="width: 96px" />
+                <col style="width: 96px" />
                 <col style="width: 110px" />
-                <col style="width: 110px" />
-                <col style="width: 120px" />
-                <col style="width: 130px" />
-                <col style="width: 140px" />
+                <col style="width: 118px" />
+                <col style="width: 126px" />
+                <col style="width: 132px" />
+                <col style="width: 124px" />
+                <col style="width: 104px" />
+                <col style="width: 138px" />
+                <col style="width: 132px" />
+                <col style="width: 104px" />
                 <col style="width: 150px" />
-                <col style="width: 140px" />
-                <col style="width: 120px" />
-                <col style="width: 150px" />
-                <col style="width: 150px" />
-                <col style="width: 120px" />
-                <col style="width: 170px" />
               </colgroup>
               <thead>
                 <tr>
@@ -1088,6 +1089,15 @@
         });
       }
 
+      function formatDecimalValue(value) {
+        if (value === null || value === undefined || value === "") return "";
+
+        const numeric = Number(String(value).replace(/,/g, ""));
+        if (!Number.isFinite(numeric)) return value;
+
+        return numeric.toFixed(2);
+      }
+
       async function previewCandidatesFromBackend() {
         const payload = {
           query: searchInput.value.trim(),
@@ -1124,8 +1134,11 @@
         });
 
         const data = result.item || result;
+        const decimalKeys = new Set(["exclusiveArea", "supplyArea", "landShareArea"]);
+
         Object.entries(fieldMap).forEach(([key, field]) => {
-          field.value = data[key] || "";
+          const rawValue = data[key] || "";
+          field.value = decimalKeys.has(key) ? formatDecimalValue(rawValue) : rawValue;
         });
 
         setTypeFields(data);
