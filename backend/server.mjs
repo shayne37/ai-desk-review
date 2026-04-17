@@ -5,7 +5,7 @@ const PORT = Number(process.env.PORT || 8787);
 const JUSO_API_KEY = process.env.JUSO_API_KEY || "";
 const DATA_GO_KR_API_KEY = process.env.DATA_GO_KR_API_KEY || "";
 const VWORLD_API_KEY = process.env.VWORLD_API_KEY || "";
-const VWORLD_DOMAIN = process.env.VWORLD_DOMAIN || "api.vworld.kr";
+const VWORLD_DOMAIN = process.env.VWORLD_DOMAIN || "shayne37.github.io";
 const BUILDING_HUB_BASE_URL = "https://apis.data.go.kr/1613000/BldRgstHubService";
 const LEGAL_DONG_BASE_URL = "https://apis.data.go.kr/1741000/StanReginCd/getStanReginCdList";
 const VWORLD_INDVD_LAND_PRICE_URL = "https://api.vworld.kr/ned/data/getIndvdLandPriceAttr";
@@ -406,14 +406,29 @@ async function fetchVworldIndividualLandPrice({ pnu, requestDomain }) {
     root?.items?.item ??
     Object.values(root).find(Array.isArray) ??
     [];
-  const list = Array.isArray(rows) ? rows : [rows];
-  return list.find(Boolean) || null;
+  return pickLatestLandPriceRow(rows);
 }
 
 function resolveVworldDomain(requestDomain = "") {
   const normalized = cleanText(requestDomain);
   if (normalized && normalized !== "null") return normalized;
+  if (VWORLD_DOMAIN === "api.vworld.kr") return "shayne37.github.io";
   return VWORLD_DOMAIN;
+}
+
+function pickLatestLandPriceRow(rows) {
+  const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
+  if (!list.length) return null;
+
+  return [...list].sort((left, right) => {
+    const rightYear = Number(right?.stdrYear || 0);
+    const leftYear = Number(left?.stdrYear || 0);
+    if (rightYear !== leftYear) return rightYear - leftYear;
+
+    const rightDate = String(right?.pblntfDe || "");
+    const leftDate = String(left?.pblntfDe || "");
+    return rightDate.localeCompare(leftDate);
+  })[0];
 }
 
 function parseCoordinate(value) {
