@@ -322,6 +322,13 @@ function normalizeAddressName(rawAddress = "") {
     .join(" ");
 }
 
+function extractParcelToken(rawAddress = "") {
+  const cleaned = rawAddress.replace(/\s+/g, " ").trim();
+  const matches = cleaned.match(/산?\d+(?:-\d+)?/g);
+  if (!matches?.length) return "";
+  return matches.at(-1) || "";
+}
+
 function pickBestLegalDong(rows, addressName) {
   if (!rows.length) return null;
   const exact = rows.find((row) => row.locatadd_nm === addressName);
@@ -334,9 +341,7 @@ function pickBestLegalDong(rows, addressName) {
 }
 
 function parseJibunAddress(jibunAddr = "") {
-  const cleaned = jibunAddr.replace(/\s+/g, " ").trim();
-  const tokens = cleaned.split(" ");
-  const last = tokens.at(-1) || "";
+  const last = extractParcelToken(jibunAddr);
   const isMountain = last.startsWith("산");
   const numeric = last.replace(/^산/, "");
   const [bunRaw = "", jiRaw = "0"] = numeric.split("-");
@@ -604,7 +609,7 @@ function mapBuildingItemToBasicInfo({
   return {
     address:
       normalizeAddressName(selected?.jibunAddr || selected?.roadAddr || "") || "",
-    parcel: selected?.jibunAddr?.split(" ").at(-1) || "",
+    parcel: extractParcelToken(selected?.jibunAddr || "") || "",
     buildingName: buildingItem?.bldNm || selected?.bdNm || selected?.fetchLabel || "",
     exclusiveArea: exposureSummary?.exclusiveArea || "",
     supplyArea: exposureSummary?.supplyArea || buildingItem?.totArea || "",
@@ -713,7 +718,7 @@ async function resolveBasicInfo(query, propertyType, candidateIndex) {
     return {
       item: {
         address: selected.jibunAddr || selected.roadAddr || "",
-        parcel: selected.jibunAddr?.split(" ").at(-1) || "",
+        parcel: extractParcelToken(selected.jibunAddr || "") || "",
         buildingName: selected.bdNm || selected.fetchLabel || "",
         exclusiveArea: "",
         supplyArea: "",
